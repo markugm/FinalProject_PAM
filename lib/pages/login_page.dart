@@ -44,8 +44,6 @@ class _LoginPageState extends State<LoginPage> {
       await prefs.setBool('isLoggedIn', true);
       await prefs.setString('loggedInUser', username); // Simpan nama user
 
-      await updateStreak(username); // Perbarui daily streak
-
       // 2. Tampilkan notifikasi sukses (opsional)
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

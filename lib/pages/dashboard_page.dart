@@ -29,11 +29,15 @@ class _DashboardPageState extends State<DashboardPage> {
   // --- Function to load username from SharedPreferences ---
   Future<void> _loadUsername() async {
     final prefs = await SharedPreferences.getInstance();
+    String? user = prefs.getString('loggedInUser');
     // Use mounted check for safety in async operations
     if (mounted) {
       setState(() {
-        _loggedInUser = prefs.getString('loggedInUser');
+        _loggedInUser = user;
       });
+    }
+    if(user != null){
+      await updateStreak(user); // Perbarui daily streak
     }
   }
 
