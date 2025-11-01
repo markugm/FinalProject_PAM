@@ -2,6 +2,11 @@
 Aplikasi jurnal membaca personal dengan sistem gamifikasi yang mendorong kebiasaan membaca setiap hari.  
 Dibangun menggunakan **Flutter & Dart** — dengan penyimpanan data lokal berbasis **Hive**, dan integrasi **Google Books API** untuk pencarian metadata buku.
 
+### Identitas Pengembang
+Nama: Sania Dinara Safina
+NIM: 124230020
+Kelas: PAM SI-D
+
 ---
 
 ## ✨ Fitur Utama
