@@ -1,95 +1,76 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../utils/helpers.dart'; // For xpForNextLevel
-import 'login_page.dart'; // For logout
+import '../utils/helpers.dart'; // Untuk xpForNextLevel & updateStreak
+import '../utils/constants.dart'; // Import warna BARU
+import 'book_detail_page.dart'; // Kita butuh ini untuk navigasi 'Koleksimu'
 
-// Changed to StatefulWidget
+// Dashboard sekarang adalah 'Home'
 class DashboardPage extends StatefulWidget {
-  const DashboardPage({super.key});
+  // Callback untuk pindah tab
+  final VoidCallback onNavigateToSearch;
+  final VoidCallback onNavigateToCollection;
+
+  const DashboardPage({
+    super.key,
+    required this.onNavigateToSearch,
+    required this.onNavigateToCollection,
+  });
 
   @override
   State<DashboardPage> createState() => _DashboardPageState();
 }
 
-// Changed to State
 class _DashboardPageState extends State<DashboardPage> {
-  // --- Define colors ---
-  final Color oliveGreen = const Color(0xFF84994F);
-  final Color warmOrange = const Color(0xFFFCB53B);
-  final Color paleYellow = const Color(0xFFFFE797);
-  String? _loggedInUser; // Variable to store the logged-in username
+  String? _loggedInUser;
+  // Kita butuh bookBox di sini untuk list buku terbaru
+  final Box bookBox = Hive.box('bookBox');
 
   @override
   void initState() {
     super.initState();
-    _loadUsername(); // Load username when the page starts
+    _loadUsernameAndStreak(); // Muat username DAN update streak
   }
 
-  // --- Function to load username from SharedPreferences ---
-  Future<void> _loadUsername() async {
+  // Muat username DAN update streak
+  Future<void> _loadUsernameAndStreak() async {
     final prefs = await SharedPreferences.getInstance();
     String? user = prefs.getString('loggedInUser');
-    // Use mounted check for safety in async operations
+
     if (mounted) {
       setState(() {
         _loggedInUser = user;
       });
     }
-    if(user != null){
-      await updateStreak(user); // Perbarui daily streak
-    }
-  }
-
-  // --- Logout function ---
-  void _logout(BuildContext context) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear(); // Clear all session data
-
-    // Navigate to LoginPage and remove all previous routes
-    if (mounted) {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (context) => const LoginPage()),
-        (Route<dynamic> route) => false, // Remove all routes
-      );
+    
+    // Logic Streak tetap di sini (ini pemicu utamanya)
+    if (user != null) {
+      await updateStreak(user); 
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // --- Use AnimatedBuilder to listen to multiple Hive boxes ---
+    // Kita dengarkan profileBox (untuk XP/Level) & bookBox (untuk Koleksimu)
     return AnimatedBuilder(
-      // Listen to changes in BOTH bookBox and logBox
       animation: Listenable.merge([
-        Hive.box('bookBox').listenable(),
-        Hive.box('logBox').listenable(),
         Hive.box('profileBox').listenable(),
+        Hive.box('bookBox').listenable(),
       ]),
       builder: (context, child) {
-        // The builder function
-        // --- Show loading if username isn't loaded yet ---
+        
+        // --- Tampilkan loading jika username belum siap ---
         if (_loggedInUser == null) {
-          // Provide a Scaffold during loading so the AppBar doesn't disappear
           return Scaffold(
-            appBar: AppBar(
-              title: const Text("Dashboard"),
-              backgroundColor: oliveGreen,
-              foregroundColor: Colors.white,
-              automaticallyImplyLeading: false,
-            ),
-            body: const Center(child: CircularProgressIndicator()),
+            appBar: AppBar(title: const Text("Home")), // Judul baru
+            body: const Center(child: CircularProgressIndicator(color: primaryPurple))
           );
         }
 
-        // --- Get Hive boxes ---
-        final bookBox = Hive.box('bookBox');
-        final logBox = Hive.box('logBox');
+        // --- Ambil Data Gamification ---
         final profileBox = Hive.box('profileBox');
-
-        //ambil data profile user
         var profile = profileBox.get(_loggedInUser);
-        Map<String, dynamic> userProfile = {};
-
+        
         int userLevel = 1;
         int userXp = 0;
         int userStreak = 1;
@@ -97,7 +78,7 @@ class _DashboardPageState extends State<DashboardPage> {
         double xpProgress = 0.0;
 
         if (profile != null) {
-          userProfile = Map<String, dynamic>.from(profile as Map);
+          final userProfile = Map<String, dynamic>.from(profile as Map);
           userLevel = userProfile['level'] ?? 1;
           userXp = userProfile['xp'] ?? 0;
           userStreak = userProfile['streak'] ?? 1;
@@ -105,308 +86,304 @@ class _DashboardPageState extends State<DashboardPage> {
           xpProgress = (xpToNextLevel > 0) ? (userXp / xpToNextLevel) : 0.0;
         }
 
-        // --- 1. FILTER DATA BY USERNAME ---
-        final userBooks = bookBox.values.where((book) {
-          try {
-            final bookMap = Map<String, dynamic>.from(book as Map);
-            return bookMap['username'] == _loggedInUser;
-          } catch (e) {
-            print("Error casting book data in Dashboard: $e");
-            return false;
-          } // Filter out invalid data
-        }).toList();
+        // --- Ambil 3 Buku Terbaru (Helper di bawah) ---
+        final recentBooks = _getRecentBooks(bookBox: bookBox, loggedInUser: _loggedInUser!);
 
-        final userLogs = logBox.values.where((log) {
-          try {
-            final logMap = Map<String, dynamic>.from(log as Map);
-            return logMap['username'] == _loggedInUser;
-          } catch (e) {
-            print("Error casting log data in Dashboard: $e");
-            return false;
-          } // Filter out invalid data
-        }).toList();
-
-        // --- 2. CALCULATE STATS (from filtered data) ---
-        final int totalBooks = userBooks.length;
-        final int totalFinishedBooks = userBooks
-            .where((book) => (book as Map)['status'] == 'Finished')
-            .length;
-        final int totalLogs = userLogs.length;
-
-        int totalPagesRead = 0;
-        for (var bookMap in userBooks) {
-          try {
-            // Safely cast and add pages
-            totalPagesRead += (bookMap as Map)['currentPage'] as int? ?? 0;
-          } catch (e) {
-            print("Error calculating total pages read: $e");
-          }
-        }
-
-        // --- 3. CHECK ACHIEVEMENTS (from filtered data) ---
-        bool hasUsedLBS = userLogs.any(
-          (log) => (log as Map)['latitude'] != null,
-        );
-
-        // --- Return the main Scaffold for the Dashboard ---
+        // --- UI BARU (VIBRANT & COLORFUL) ---
         return Scaffold(
-          appBar: AppBar(
-            title: const Text("Dashboard"),
-            backgroundColor: oliveGreen,
-            foregroundColor: Colors.white,
-            automaticallyImplyLeading: false, // No back button
-          ),
+          // Kita tidak pakai AppBar agar lebih 'full screen'
           body: SingleChildScrollView(
-            // Allow scrolling
-            padding: const EdgeInsets.all(16.0),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // --- SAPAAN PERSONAL (HILANG) ---
-                Text(
-                  'Selamat Datang, $_loggedInUser!',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: oliveGreen,
+                // --- 1. Header (Greetings) ---
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20.0, 60.0, 20.0, 24.0), // Padding atas lebih besar
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Selamat Datang,',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w500,
+                          color: textSecondary,
+                        ),
+                      ),
+                      Text(
+                        _loggedInUser ?? 'Reader', // Tampilkan nama
+                        style: const TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: textPrimary,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
 
-                // --- BLOK GAMIFICATION (HILANG) ---
-                const SizedBox(height: 24),
-                Card(
-                  elevation: 2.0,
-                  color: paleYellow, // Warna dari palette
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
+                // --- 2. Gamification Card (COLORFUL) ---
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Container(
+                    padding: const EdgeInsets.all(20.0),
+                    decoration: BoxDecoration(
+                      // Pakai GRADIENT sesuai referensi
+                      gradient: LinearGradient(
+                        colors: [primaryPurple, primaryPurple.withOpacity(0.8)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(24.0), // Lebih rounded
+                      boxShadow: [
+                        BoxShadow(
+                          color: primaryPurple.withOpacity(0.3),
+                          blurRadius: 15,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Baris Level & Streak
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text(
-                              "Level $userLevel",
-                              style: TextStyle(
-                                fontSize: 28,
-                                fontWeight: FontWeight.bold,
-                                color: oliveGreen,
+                            // Level (dengan Ikon)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.shield_rounded, color: Colors.white, size: 20),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    "Level $userLevel",
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                            Row(
-                              // Streak
-                              children: [
-                                Icon(
-                                  Icons.local_fire_department_rounded,
-                                  color: warmOrange,
-                                  size: 30,
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  "$userStreak Hari",
-                                  style: const TextStyle(
-                                    fontSize: 24,
-                                    fontWeight: FontWeight.bold,
+                            // Streak (dengan Ikon)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.local_fire_department_rounded, color: accentPink, size: 20),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    "$userStreak Hari",
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
                                   ),
-                                ),
-                              ],
-                            ),
+                                ],
+                              ),
+                            )
                           ],
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 20),
                         // XP Progress Bar
                         LinearProgressIndicator(
                           value: xpProgress,
-                          minHeight: 12, // Bikin tebal
-                          backgroundColor: Colors.grey[300],
-                          valueColor: AlwaysStoppedAnimation<Color>(warmOrange),
+                          minHeight: 10,
+                          backgroundColor: Colors.white.withOpacity(0.2),
+                          valueColor: const AlwaysStoppedAnimation<Color>(accentYellow), // Warna kuning
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        const SizedBox(height: 4),
-                        // Teks XP
+                        const SizedBox(height: 8),
                         Text(
                           "$userXp / $xpToNextLevel XP",
                           style: TextStyle(
                             fontSize: 14,
-                            color: Colors.grey[700],
+                            color: Colors.white.withOpacity(0.9),
                           ),
-                          textAlign: TextAlign.center,
+                          textAlign: TextAlign.start,
                         ),
                       ],
                     ),
                   ),
                 ),
 
-                const Divider(height: 48, thickness: 1),
-
-                // --- Stats Section ---
-                Text(
-                  "Ringkasan Membaca",
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: oliveGreen,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    _buildStatCard("Total Buku", totalBooks.toString()),
-                    _buildStatCard(
-                      "Buku Selesai",
-                      totalFinishedBooks.toString(),
+                // --- 3. Tombol "Baca Buku Baru >" (Sesuai Wireframe) ---
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16.0, 24.0, 16.0, 0.0),
+                  child: ElevatedButton(
+                    onPressed: widget.onNavigateToSearch, // Panggil callback
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accentPink, // Warna aksen Pink/Merah
+                      padding: const EdgeInsets.symmetric(vertical: 16),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    _buildStatCard("Total Halaman", totalPagesRead.toString()),
-                    _buildStatCard("Sesi Baca", totalLogs.toString()),
-                  ],
-                ),
-
-                const Divider(height: 48, thickness: 1), // Separator
-                // --- Achievements Section ---
-                Text(
-                  "Pencapaian (Achievement)",
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: oliveGreen,
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('Baca Buku Baru', style: TextStyle(fontSize: 15, color: Colors.white, fontWeight: FontWeight.bold)),
+                        SizedBox(width: 8),
+                        Icon(Icons.arrow_forward_ios_rounded, size: 15, color: Colors.white),
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(height: 16),
 
-                // Achievement List (using filtered stats)
-                _buildAchievement(
-                  title: "Kutu Buku Pemula",
-                  subtitle: "Selesaikan 1 buku pertama Anda.",
-                  isUnlocked: (totalFinishedBooks >= 1),
-                  progressValue: totalFinishedBooks.toDouble(), // <-- Progres saat ini
-                  targetValue: 1, // <-- Target
+                // --- 4. Koleksimu (Sesuai Wireframe) ---
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20.0, 32.0, 16.0, 8.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        "Koleksimu",
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textPrimary),
+                      ),
+                      TextButton(
+                        onPressed: widget.onNavigateToCollection, // Panggil callback
+                        style: TextButton.styleFrom(
+                          foregroundColor: primaryPurple,
+                        ),
+                        child: const Text(
+                          "Selengkapnya >", 
+                          style: TextStyle(fontWeight: FontWeight.bold)
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                _buildAchievement(
-                  title: "Maraton Pemula",
-                  subtitle: "Capai 1.000 total halaman terbaca.",
-                  isUnlocked: (totalPagesRead >= 1000),
-                  progressValue: totalPagesRead.toDouble(), // <-- Progres saat ini
-                  targetValue: 1000, // <-- Target
-                ),
-                _buildAchievement(
-                  title: "Kolektor",
-                  subtitle: "Miliki 5 buku di koleksi Anda.",
-                  isUnlocked: (totalBooks >= 5),
-                  progressValue: totalBooks.toDouble(), // <-- Progres saat ini
-                  targetValue: 5, // <-- Target
-                ),
-                _buildAchievement(
-                  title: "Penjelajah",
-                  subtitle: "Gunakan fitur Check-in LBS.",
-                  isUnlocked: hasUsedLBS,
-                  // Tidak perlu progress bar, karena ini 0 atau 1
-                ),
-
+                
+                // Tampilkan list buku
+                (recentBooks.isEmpty)
+                  ? _buildEmptyCollectionCTA(onNavigate: widget.onNavigateToSearch) // <-- PANGGILAN YANG BENAR
+                  : SizedBox(
+                      height: 180, 
+                      child: ListView.builder(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: recentBooks.length,
+                        padding: const EdgeInsets.only(left: 16.0), // Tambah padding kiri
+                        itemBuilder: (context, index) {
+                          final bookData = recentBooks[index];
+                          final String thumbnail = bookData['coverUrl'] ?? '';
+                          final String hiveKey = bookData['hiveKey']; 
+                          
+                          return GestureDetector(
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => BookDetailPage(bookId: hiveKey),
+                                ),
+                              );
+                            },
+                            child: Container(
+                              width: 110, 
+                              margin: const EdgeInsets.only(right: 12.0),
+                              child: Column(
+                                children: [
+                                  Card(
+                                    elevation: 4.0,
+                                    shadowColor: textPrimary.withOpacity(0.1),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(16.0),
+                                      child: thumbnail.isNotEmpty
+                                          ? Image.network(
+                                              thumbnail,
+                                              height: 150,
+                                              width: 100,
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (c, e, s) => Container(height: 150, width: 100, color: Colors.grey[200], child: const Icon(Icons.broken_image, color: textSecondary)),
+                                            )
+                                          : Container(
+                                              height: 150,
+                                              width: 100,
+                                              color: Colors.grey[200],
+                                              child: const Icon(Icons.book_outlined, color: textSecondary),
+                                            ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                const SizedBox(height: 100), // Padding bawah agar tidak mentok Nav
               ],
             ),
           ),
         );
-      }, // End of AnimatedBuilder builder
-    ); // End of AnimatedBuilder
-  }
-
-  // --- Helper widget for Stat Cards (No changes needed) ---
-  Widget _buildStatCard(String title, String value) {
-    return Card(
-      elevation: 2.0,
-      color: paleYellow, // Use color from palette
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-        child: Column(
-          children: [
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: oliveGreen,
-              ),
-            ),
-            Text(title, style: const TextStyle(fontSize: 14)),
-          ],
-        ),
-      ),
+      },
     );
   }
 
-// --- Helper widget untuk list Achievement (Kode BARU dengan Progress Bar) ---
-  Widget _buildAchievement({
-    required String title,
-    required String subtitle,
-    required bool isUnlocked,
-    double progressValue = 0.0, // <-- BARU: Progres saat ini (misal: 300)
-    double targetValue = 1.0, // <-- BARU: Target (misal: 1000)
-  }) {
-    // Hitung persColor.fromARGB(255, 96, 67, 67)es (0.0 sampai 1.0)
-    double progressPercent = (targetValue > 0) ? (progressValue / targetValue) : 0.0;
-    if (progressPercent > 1.0) progressPercent = 1.0; // Pastikan tidak lebih dari 100%
+  // --- Helper Ambil Buku (SAMA) ---
+  List<Map<String, dynamic>> _getRecentBooks({required Box bookBox, required String loggedInUser}) {
+      final List<Map<String, dynamic>> userBooks = [];
+      for (var key in bookBox.keys) { 
+        try {
+          final bookMap = Map<String, dynamic>.from(bookBox.get(key) as Map);
+          if (bookMap['username'] == loggedInUser) {
+            bookMap['hiveKey'] = key;
+            userBooks.add(bookMap);
+          }
+        } catch (e) { /* abaikan */ }
+      }
+      return userBooks.reversed.take(3).toList();
+  }
 
-    return Card(
-      color: isUnlocked ? Colors.white : Colors.grey[100],
-      elevation: isUnlocked ? 3.0 : 0.0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      margin: const EdgeInsets.symmetric(vertical: 8.0),
-      child: ListTile(
-        leading: Icon(
-          isUnlocked ? Icons.verified_rounded : Icons.lock_outline_rounded,
-          color: isUnlocked ? warmOrange : Colors.grey,
-          size: 40,
-        ),
-        title: Text(
-          title,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: isUnlocked ? Colors.black : Colors.grey[600],
+  // --- WIDGET BARU: Tampilan jika koleksi kosong (DENGAN PERBAIKAN) ---
+  Widget _buildEmptyCollectionCTA({required VoidCallback onNavigate}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0),
+      child: Container(
+        padding: const EdgeInsets.all(20.0),
+        height: 180,
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [accentGreen.withOpacity(0.8), accentGreen.withOpacity(0.6)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
           ),
+          borderRadius: BorderRadius.circular(16.0),
         ),
-        subtitle: Column( // <-- BARU: Ubah Subtitle jadi Column
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              subtitle,
+            const Icon(Icons.add_photo_alternate_rounded, size: 40, color: Colors.white),
+            const SizedBox(height: 8),
+            const Text(
+              "Koleksimu masih kosong",
+              textAlign: TextAlign.center,
               style: TextStyle(
-                color: isUnlocked ? Colors.black87 : Colors.grey[500],
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
               ),
             ),
-            // --- BARU: Tampilkan Progress Bar jika BELUM UNLOCKED ---
-            if (!isUnlocked && progressValue > 0) 
-              Padding(
-                padding: const EdgeInsets.only(top: 8.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    LinearProgressIndicator(
-                      value: progressPercent,
-                      backgroundColor: Colors.grey[300],
-                      valueColor: AlwaysStoppedAnimation<Color>(oliveGreen),
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      "${progressValue.toInt()} / ${targetValue.toInt()}", // Teks (300 / 1000)
-                      style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                    ),
-                  ],
-                ),
+            const SizedBox(height: 8),
+            ElevatedButton(
+              onPressed: onNavigate, // <-- GUNAKAN CALLBACK
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: accentGreen, // Teks warna hijau
               ),
+              child: const Text("Tambah Buku Pertamamu!", style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
           ],
         ),
       ),
     );
   }
-} // <-- End of _DashboardPageState class
+}

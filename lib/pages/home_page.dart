@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
+import '../utils/constants.dart';
 
-// Import 4 halaman (urutan import tidak masalah)
 import 'dashboard_page.dart';
 import 'collection_page.dart';
-import 'add_book_page.dart'; // Ini tetap halaman untuk "Cari"
+import 'add_book_page.dart';
 import 'profile_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -13,25 +13,23 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
-  int _selectedIndex = 0; 
-  
-  // --- DIUBAH: Urutan List Halaman ---
-  // Susunan baru: Home -> Cari/Tambah -> Koleksi -> Profil
-  static const List<Widget> _pages = <Widget>[
-    DashboardPage(),
-    AddBookPage(),     // Halaman "Cari" ada di posisi kedua
-    CollectionPage(),
-    ProfilePage(),
-  ];
+class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
+  int _selectedIndex = 0;
+  late List<Widget> _pages;
 
-  // --- DIUBAH: Urutan dan Nama Judul AppBar ---
-  static const List<String> _pageTitles = [
-    "Dashboard",
-    "Cari Buku",       // Judul AppBar untuk halaman "Cari"
-    "Koleksiku",
-    "Profil"
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _pages = <Widget>[
+      DashboardPage(
+        onNavigateToSearch: () => _onItemTapped(1),
+        onNavigateToCollection: () => _onItemTapped(2),
+      ),
+      const AddBookPage(),
+      const CollectionPage(),
+      const ProfilePage(),
+    ];
+  }
 
   void _onItemTapped(int index) {
     setState(() {
@@ -39,50 +37,82 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  // Definisikan warna Anda
-  final Color oliveGreen = const Color(0xFF84994F);
-  final Color warmOrange = const Color(0xFFFCB53B);
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      
+      backgroundColor: scaffoldBg,
       body: IndexedStack(
         index: _selectedIndex,
         children: _pages,
       ),
 
-      bottomNavigationBar: BottomNavigationBar(
-        // --- DIUBAH: Urutan, Label, dan Ikon Item Navigasi ---
-        items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(
-            icon: Icon(Icons.dashboard_rounded),
-            label: 'Home',
+      // --- ✨ FLOATING NAVBAR (FINAL POLISH) ---
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(16, 8, 16, 27),
+        child: Container(
+          decoration: BoxDecoration(
+            color: cardBg, // ✅ flat background
+            borderRadius: BorderRadius.circular(22),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.06), // soft shadow
+                spreadRadius: 1,
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.search_rounded), // Ikon diganti ke "Search"
-            label: 'Cari',                   // Label diganti ke "Cari"
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.book_rounded),
-            label: 'Koleksi',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person_rounded),
-            label: 'Profil',
-          ),
-        ],
-        
-        currentIndex: _selectedIndex, 
-        onTap: _onItemTapped,      
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: BottomNavigationBar(
+              currentIndex: _selectedIndex,
+              onTap: _onItemTapped,
+              type: BottomNavigationBarType.fixed,
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              selectedItemColor: textPrimary,
+              unselectedItemColor: textSecondary.withOpacity(0.6),
+              showSelectedLabels: false,
+              showUnselectedLabels: false,
+              iconSize: 26,
 
-        // Style (Sama seperti sebelumnya)
-        backgroundColor: Colors.white,      
-        type: BottomNavigationBarType.fixed, 
-        selectedItemColor: warmOrange,      
-        unselectedItemColor: oliveGreen,    
-        showUnselectedLabels: false,        
-        showSelectedLabels: true,           
+              items: [
+                _buildNavItem(Icons.home_filled, 0),
+                _buildNavItem(Icons.search_rounded, 1),
+                _buildNavItem(Icons.library_books_rounded, 2),
+                _buildNavItem(Icons.person_rounded, 3),
+              ],
+            ),
+          ),
+        ),
+      ),
+
+    );
+  }
+
+  BottomNavigationBarItem _buildNavItem(IconData icon, int index) {
+    final bool isActive = _selectedIndex == index;
+
+    return BottomNavigationBarItem(
+      label: '',
+      icon: AnimatedScale(
+        duration: const Duration(milliseconds: 180),
+        scale: isActive ? 1.15 : 1.0,
+        curve: Curves.easeOutBack,
+        child: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: isActive
+                ? accentYellow.withOpacity(0.30) // ✅ warm yellow solid, no glow
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(
+            icon,
+            color: isActive ? accentYellow : textSecondary,
+            size: isActive ? 26 : 24,
+          ),
+        ),
       ),
     );
   }

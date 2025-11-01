@@ -14,121 +14,97 @@ class AddBookPage extends StatefulWidget {
 }
 
 class _AddBookPageState extends State<AddBookPage> {
-  // 1. Definisikan Warna
-  final Color oliveGreen = const Color(0xFF84994F);
-  final Color warmOrange = const Color(0xFFFCB53B);
-
-  // 2. State Variables
   final TextEditingController _searchController = TextEditingController();
-  List<dynamic> _bookResults = []; // List untuk menyimpan hasil pencarian
-  bool _isLoading = false; // Status apakah sedang loading
-  bool _userHasSearched = false; // Status apakah user sudah mencari
+  List<dynamic> _bookResults = [];
+  bool _isLoading = false;
+  bool _userHasSearched = false;
 
-  // 3. Logic untuk Mencari Buku
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  // --- LOGIC PENCARIAN (TANPA CEK KONEKSI) ---
   Future<void> _searchBooks() async {
     final query = _searchController.text;
-
-    // Validasi: Jangan cari jika input kosong
     if (query.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Silakan masukkan judul atau penulis.")),
+        const SnackBar(content: Text("Silakan masukkan judul atau penulis."), backgroundColor: errorRed),
       );
       return;
     }
 
-    // Set state loading
+    // --- BLOK CEK KONEKSI DIHAPUS ---
+
     setState(() {
       _isLoading = true;
-      _userHasSearched = true; // User sudah pernah mencari
-      _bookResults = []; // Kosongkan hasil lama
+      _userHasSearched = true;
+      _bookResults = [];
     });
 
-    // Panggil API menggunakan API_KEY dari constants.dart
     final url = Uri.parse(
-      'https://www.googleapis.com/books/v1/volumes?q=$query&key=$GOOGLE_BOOKS_API_KEY',
-    );
+        'https://www.googleapis.com/books/v1/volumes?q=$query&key=$GOOGLE_BOOKS_API_KEY');
 
     try {
       final response = await http.get(url);
-
       if (response.statusCode == 200) {
-        // Jika sukses (200 OK)
         final data = jsonDecode(response.body);
-
-        // Update state dengan data baru
         setState(() {
-          // 'items' adalah list buku dari JSON
           _bookResults = data['items'] ?? [];
-          _isLoading = false;
         });
       } else {
-        // Jika gagal (misal 404, 500)
-        setState(() {
-          _isLoading = false;
-        });
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Gagal mengambil data buku.")),
+          const SnackBar(content: Text("Gagal mengambil data buku."), backgroundColor: errorRed),
         );
       }
     } catch (e) {
-      // Jika error (misal: tidak ada internet)
-      setState(() {
-        _isLoading = false;
-      });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Error: $e")));
+      // Catch ini sekarang akan menangani error (termasuk tidak ada internet)
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Error: Tidak ada koneksi atau server bermasalah."), backgroundColor: errorRed),
+      );
+    }
+    
+    if (mounted) {
+      setState(() { _isLoading = false; });
     }
   }
 
-  // 4. Logic untuk Simpan Buku ke Hive
+  // --- LOGIC SIMPAN BUKU (SAMA PERSIS, SUDAH LENGKAP) ---
   void _saveBookToHive(dynamic bookData) async {
-
-    // Buka 'kotak' buku
     final bookBox = Hive.box('bookBox');
-
-    // 'id' dari Google Books API adalah ID unik
     final String bookId = bookData['id'];
 
-    // Ambil data penting dari JSON
     final String title = bookData['volumeInfo']['title'] ?? 'Tanpa Judul';
     final List<dynamic>? authorsList = bookData['volumeInfo']['authors'];
     final String authors = (authorsList ?? ['N/A']).join(', ');
-    final String coverUrl =
-        bookData['volumeInfo']['imageLinks']?['thumbnail'] ?? '';
+    final String coverUrl = bookData['volumeInfo']['imageLinks']?['thumbnail'] ?? '';
     final int pageCount = bookData['volumeInfo']['pageCount'] ?? 0;
-    final String description =
-        bookData['volumeInfo']['description'] ?? 'Tidak ada sinopsis.';
-
-    // Ambil list kategori, lalu ambil item pertama. Jika tidak ada, 'N/A'.
+    final String description = bookData['volumeInfo']['description'] ?? 'Tidak ada sinopsis.';
     final List<dynamic>? categoriesList = bookData['volumeInfo']['categories'];
     final String category = (categoriesList != null && categoriesList.isNotEmpty)
         ? categoriesList[0] as String
         : 'N/A';
 
-    // DAPATKAN USERNAME YANG LOGIN
     final prefs = await SharedPreferences.getInstance();
-    final String? loggedInUser = prefs.getString(
-      'loggedInUser',
-    ); // Ambil dari session
+    final String? loggedInUser = prefs.getString('loggedInUser');
 
-    // 2. Cek apakah buku ini sudah ada di koleksi USER INI
     final bool alreadyExists = bookBox.values.any((book) {
-      final bookMap = Map<String, dynamic>.from(book as Map);
-      return bookMap['id'] == bookId && bookMap['username'] == loggedInUser;
+       final bookMap = Map<String, dynamic>.from(book as Map);
+       return bookMap['id'] == bookId && bookMap['username'] == loggedInUser;
     });
 
     if (alreadyExists) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text("Buku ini sudah ada di koleksimu."),
-          backgroundColor: warmOrange,
+        const SnackBar(
+          content: Text("Buku ini sudah ada di koleksimu."),
+          backgroundColor: accentYellow,
+          behavior: SnackBarBehavior.floating, 
         ),
       );
-      return; // Hentikan fungsi
+      return;
     }
 
-    // Siapkan data untuk disimpan ke Hive
     final Map<String, dynamic> bookMap = {
       'id': bookId,
       'title': title,
@@ -142,166 +118,169 @@ class _AddBookPageState extends State<AddBookPage> {
       'price': 0.0,
       'review': '',
       'rating': 0,
-      'username': loggedInUser ?? 'unknown', 
+      'username': loggedInUser ?? 'unknown',
     };
-
-    final String uniqueHiveKey = '${loggedInUser}_$bookId';
+    
+    final String uniqueHiveKey = "${loggedInUser}_$bookId";
     bookBox.put(uniqueHiveKey, bookMap);
-
-    // Panggil notifikasi "Buku Ditambahkan" ---
+    
     final notificationService = NotificationService();
     await notificationService.requestPermissions(); 
     await notificationService.scheduleNotificationNow(
-      title: "Ada Buku Baru di Koleksimu!",
+      title: "Buku Baru Ditambahkan!",
       body: "Ayo mulai perjalananmu membaca '$title'!",
-      delaySeconds: 2, // Muncul 2 detik setelah ditambah
-      notificationId: 3, // Pakai ID unik (misal 3)
+      delaySeconds: 2,
+      notificationId: 3, 
     );
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text("$title berhasil ditambahkan ke koleksi!"),
-        backgroundColor: oliveGreen, // Warna sukses
+      const SnackBar(
+        content: Text("Buku berhasil ditambahkan ke koleksi!"),
+        backgroundColor: accentGreen,
       ),
     );
   }
 
-  // 5. Jangan lupa dispose controller
-  @override
-  void dispose() {
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  // 6. Tampilan (UI) Halaman
+  // --- UI BARU (VIBRANT TECH) ---
   @override
   Widget build(BuildContext context) {
-    // --- TAMBAHKAN SCAFFOLD & APPBAR ---
     return Scaffold(
       appBar: AppBar(
         title: const Text("Cari Buku"),
-        backgroundColor: oliveGreen,
-        foregroundColor: Colors.white,
-        automaticallyImplyLeading: false, // Hapus tombol back
+        automaticallyImplyLeading: false, 
       ),
-      body: Padding(
-        // <--- WIDGET ASLI ANDA SEKARANG ADA DI DALAM BODY
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            // --- Bagian Search Bar ---
-            Row(
+      body: Column( 
+        children: [
+          // --- Bagian Search Bar ---
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16.0, 6.0, 16.0, 10.0),
+            child: Row(
               children: [
-                // TextField
                 Expanded(
                   child: TextField(
                     controller: _searchController,
                     decoration: InputDecoration(
-                      hintText: 'Cari judul atau penulis...',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12.0),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12.0),
-                        borderSide: BorderSide(color: oliveGreen, width: 2.0),
-                      ),
+                      hintText: 'Cari judul, penulis...',
                     ),
-                    // Panggil _searchBooks saat user menekan 'Enter' di keyboard
-                    onSubmitted: (value) => _searchBooks(),
+                    onSubmitted: (value) => _searchBooks(), 
                   ),
                 ),
                 const SizedBox(width: 8.0),
-                // Tombol Search
-                IconButton(
-                  icon: const Icon(Icons.search, size: 32.0),
-                  color: oliveGreen,
-                  onPressed: _searchBooks, // Panggil _searchBooks saat ditekan
-                ),
+                ElevatedButton(
+                  onPressed: _searchBooks,
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.all(16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14.0)
+                    ),
+                  ),
+                  child: const Icon(Icons.search_rounded, color: Colors.white),
+                )
               ],
             ),
-            const SizedBox(height: 16.0),
-
-            // --- Bagian Hasil Pencarian ---
-            // Tampilkan loading spinner jika sedang mengambil data
-            if (_isLoading)
-              const Expanded(child: Center(child: CircularProgressIndicator()))
-            // Tampilkan list hasil jika tidak loading
-            else
-              Expanded(
-                // Jika user belum mencari, tampilkan pesan
-                child: !_userHasSearched
-                    ? const Center(child: Text("Silakan mulai mencari buku."))
-                    // Jika sudah mencari tapi hasil 0
-                    : _bookResults.isEmpty
-                    ? const Center(child: Text("Buku tidak ditemukan."))
-                    // Jika hasil ditemukan, tampilkan ListView
-                    : ListView.builder(
-                        itemCount: _bookResults.length,
-                        itemBuilder: (context, index) {
-                          final book = _bookResults[index];
-                          final volumeInfo = book['volumeInfo'];
-
-                          // Ambil data (dengan pengecekan data kosong)
-                          final String title =
-                              volumeInfo['title'] ?? 'Tanpa Judul';
-                          final String authors =
-                              (volumeInfo['authors'] ?? ['N/A']).join(', ');
-                          final String thumbnail =
-                              volumeInfo['imageLinks']?['thumbnail'] ?? '';
-
-                          // Tampilkan sebagai ListTile
-                          return Card(
-                            margin: const EdgeInsets.symmetric(vertical: 8.0),
-                            child: ListTile(
-                              // Tampilkan Gambar Cover
-                              leading: thumbnail.isNotEmpty
-                                  ? Image.network(
-                                      thumbnail,
-                                      width: 50,
-                                      fit: BoxFit.cover,
-                                    )
-                                  : Container(
-                                      // Placeholder jika tidak ada gambar
-                                      width: 50,
-                                      height: 70,
-                                      color: Colors.grey[200],
-                                      child: const Icon(Icons.book),
-                                    ),
-
-                              // Tampilkan Judul (RAPIAH)
-                              title: Text(
-                                title,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                                maxLines: 2, // Perintah 1: Maksimal 2 baris
-                                overflow: TextOverflow
-                                    .ellipsis, // Perintah 2: Tampilkan ...
-                              ),
-
-                              // Tampilkan Penulis (RAPIAH)
-                              subtitle: Text(
-                                authors,
-                                maxLines:
-                                    1, // Subtitle juga kita batasi 1 baris
-                                overflow: TextOverflow.ellipsis,
-                              ),
-
-                              // Tombol "Tambah" (Aksi Simpan ke Hive)
-                              trailing: IconButton(
-                                icon: Icon(Icons.add_circle, color: warmOrange),
-                                onPressed: () {
-                                  // Panggil fungsi simpan
-                                  _saveBookToHive(book);
-                                },
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+          ),
+          
+          // --- Bagian Hasil Pencarian ---
+          if (_isLoading)
+            const Expanded(
+              child: Center(
+                child: CircularProgressIndicator(color: primaryPurple),
               ),
-          ],
-        ),
+            )
+          else
+            Expanded(
+              child: !_userHasSearched
+                  ? Center( 
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.search_off_rounded, size: 80, color: Colors.grey[300]),
+                          const SizedBox(height: 16),
+                          const Text("Silakan mulai mencari buku.", style: TextStyle(color: textSecondary, fontSize: 16)),
+                        ],
+                      )
+                    )
+                  : _bookResults.isEmpty
+                      ? Center( 
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.sentiment_dissatisfied_rounded, size: 80, color: Colors.grey[300]),
+                              const SizedBox(height: 16),
+                              const Text("Buku tidak ditemukan.", style: TextStyle(color: textSecondary, fontSize: 16)),
+                            ],
+                          )
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(16.0, 0, 16.0, 100.0), 
+                          itemCount: _bookResults.length,
+                          itemBuilder: (context, index) {
+                            final book = _bookResults[index];
+                            final volumeInfo = book['volumeInfo'];
+
+                            final String title = volumeInfo['title'] ?? 'Tanpa Judul';
+                            final String authors = (volumeInfo['authors'] ?? ['N/A']).join(', ');
+                            final String thumbnail = volumeInfo['imageLinks']?['thumbnail'] ?? '';
+
+                            return Card(
+                              margin: const EdgeInsets.symmetric(vertical: 8.0),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12.0),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(8.0),
+                                      child: thumbnail.isNotEmpty
+                                        ? Image.network(
+                                            thumbnail,
+                                            width: 70, 
+                                            height: 100, 
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (c, e, s) => Container(width: 70, height: 100, color: Colors.grey[200], child: const Icon(Icons.broken_image, color: textSecondary)),
+                                          )
+                                        : Container(
+                                            width: 70,
+                                            height: 100,
+                                            color: Colors.grey[200],
+                                            child: const Icon(Icons.book_outlined, color: textSecondary),
+                                          ),
+                                    ),
+                                    const SizedBox(width: 16),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            title,
+                                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textPrimary),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            authors,
+                                            style: const TextStyle(color: textSecondary, fontSize: 14),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.add_circle_rounded, color: accentGreen, size: 30),
+                                      onPressed: () {
+                                        _saveBookToHive(book);
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+            ),
+        ],
       ),
     );
   }
